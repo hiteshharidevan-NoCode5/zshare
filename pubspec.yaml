@@ -15,6 +15,8 @@ dependencies:
   network_info_plus: ^5.0.3
   qr_flutter: ^4.1.0
   intl: ^0.19.0
+  device_info_plus: ^10.1.2
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart' hide Router;
 import 'package:file_picker/file_picker.dart';
@@ -6,6 +8,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart' as shelf_router;
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +36,24 @@ class ZShareApp extends StatelessWidget {
   }
 }
 
+class DiscoveredPeer {
+  final String deviceName;
+  final String ip;
+  final int port;
+  final int fileCount;
+  DateTime lastSeen;
+
+  DiscoveredPeer({
+    required this.deviceName,
+    required this.ip,
+    required this.port,
+    required this.fileCount,
+    required this.lastSeen,
+  });
+
+  String get url => 'http://$ip:$port';
+}
+
 class ZShareHome extends StatefulWidget {
   const ZShareHome({super.key});
 
@@ -41,16 +63,48 @@ class ZShareHome extends StatefulWidget {
 
 class _ZShareHomeState extends State<ZShareHome> {
   HttpServer? _server;
+  RawDatagramSocket? _udpSocket;
+  Timer? _broadcastTimer;
+  Timer? _pruneTimer;
+
   String? _localIp;
+  String _deviceName = 'Unknown Device';
   List<PlatformFile> _selectedFiles = [];
   final List<String> _receivedFiles = [];
+  final Map<String, DiscoveredPeer> _nearbyPeers = {};
+
   bool _isSharing = false;
   final int _port = 8888;
+  final int _discoveryPort = 8889;
 
   @override
   void initState() {
     super.initState();
-    _fetchLocalIp();
+    _initDeviceAndNetwork();
+  }
+
+  Future<void> _initDeviceAndNetwork() async {
+    await _detectDeviceName();
+    await _fetchLocalIp();
+    await _startUdpDiscovery();
+  }
+
+  Future<void> _detectDeviceName() async {
+    final info = DeviceInfoPlugin();
+    try {
+      if (Platform.isAndroid) {
+        final android = await info.androidInfo;
+        _deviceName = '${android.manufacturer} ${android.model}';
+      } else if (Platform.isLinux) {
+        final linux = await info.linuxInfo;
+        _deviceName = linux.prettyName.isNotEmpty ? linux.prettyName : 'Linux Device';
+      } else {
+        _deviceName = Platform.operatingSystem;
+      }
+    } catch (_) {
+      _deviceName = 'Local Device';
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _fetchLocalIp() async {
@@ -72,12 +126,79 @@ class _ZShareHomeState extends State<ZShareHome> {
     }
   }
 
+  Future<void> _startUdpDiscovery() async {
+    try {
+      _udpSocket = await RawDatagramSocket.bind(
+        InternetAddress.anyIPv4,
+        _discoveryPort,
+        reuseAddress: true,
+        reusePort: true,
+      );
+      _udpSocket?.broadcastEnabled = true;
+
+      _udpSocket?.listen((RawSocketEvent event) {
+        if (event == RawSocketEvent.read) {
+          final datagram = _udpSocket?.receive();
+          if (datagram != null) {
+            try {
+              final raw = utf8.decode(datagram.data);
+              final map = jsonDecode(raw) as Map<String, dynamic>;
+              final ip = map['ip'] as String;
+
+              // Ignore self-announcements
+              if (ip == _localIp) return;
+
+              final peerKey = '$ip:${map['port']}';
+              setState(() {
+                _nearbyPeers[peerKey] = DiscoveredPeer(
+                  deviceName: map['deviceName'] ?? 'Peer',
+                  ip: ip,
+                  port: map['port'] ?? 8888,
+                  fileCount: map['fileCount'] ?? 0,
+                  lastSeen: DateTime.now(),
+                );
+              });
+            } catch (_) {}
+          }
+        }
+      });
+
+      // Prune inactive peers older than 6 seconds
+      _pruneTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+        final threshold = DateTime.now().subtract(const Duration(seconds: 6));
+        setState(() {
+          _nearbyPeers.removeWhere((_, peer) => peer.lastSeen.isBefore(threshold));
+        });
+      });
+    } catch (e) {
+      debugPrint('UDP discovery socket error: $e');
+    }
+  }
+
+  void _startBroadcasting() {
+    _broadcastTimer?.cancel();
+    _broadcastTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_localIp == null || _udpSocket == null) return;
+      final payload = jsonEncode({
+        'deviceName': _deviceName,
+        'ip': _localIp,
+        'port': _port,
+        'fileCount': _selectedFiles.length,
+      });
+      final data = utf8.encode(payload);
+      _udpSocket?.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
+    });
+  }
+
+  void _stopBroadcasting() {
+    _broadcastTimer?.cancel();
+    _broadcastTimer = null;
+  }
+
   Future<void> _pickFiles() async {
     final result = await FilePicker.platform.pickFiles(allowMultiple: true);
     if (result != null && result.files.isNotEmpty) {
-      setState(() {
-        _selectedFiles = result.files;
-      });
+      setState(() => _selectedFiles = result.files);
       _startShareServer();
     }
   }
@@ -87,10 +208,9 @@ class _ZShareHomeState extends State<ZShareHome> {
 
     final router = shelf_router.Router();
 
-    // Portal interface with both download list and direct upload
     router.get('/', (Request request) {
       final fileListHtml = _selectedFiles.isEmpty
-          ? '<p style="color: #6B7280; font-size: 13px;">No files shared from host yet.</p>'
+          ? '<p style="color: #6B7280; font-size: 13px;">No files currently shared.</p>'
           : _selectedFiles.map((file) {
               final encodedName = Uri.encodeComponent(file.name);
               final sizeMb = (file.size / (1024 * 1024)).toStringAsFixed(2);
@@ -109,7 +229,7 @@ class _ZShareHomeState extends State<ZShareHome> {
         <html>
         <head>
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>ZShare Transfer Portal</title>
+          <title>ZShare Portal</title>
           <style>
             body { background: #0B0F19; color: #F3F4F6; font-family: -apple-system, sans-serif; padding: 24px; text-align: center; }
             .card { background: #111827; border: 1px solid #1F2937; border-radius: 16px; padding: 20px; max-width: 500px; margin: 0 auto 20px auto; }
@@ -118,10 +238,10 @@ class _ZShareHomeState extends State<ZShareHome> {
         </head>
         <body>
           <h1 style="color: #818CF8; margin-bottom: 4px;">⚡ ZShare</h1>
-          <p style="color: #9CA3AF; font-size: 13px; margin-bottom: 24px;">High-Speed Wi-Fi Transfer</p>
+          <p style="color: #9CA3AF; font-size: 13px; margin-bottom: 24px;">Connected to ${_deviceName}</p>
 
           <div class="card">
-            <h3 style="margin-top: 0;">📤 Send File to Host</h3>
+            <h3 style="margin-top: 0;">📤 Send Files to $_deviceName</h3>
             <form action="/upload" method="POST" enctype="multipart/form-data">
               <input type="file" name="file" required style="margin-bottom: 14px; display: block; width: 100%; color: #9CA3AF;">
               <button type="submit" class="btn">Upload to Device</button>
@@ -138,7 +258,6 @@ class _ZShareHomeState extends State<ZShareHome> {
       return Response.ok(html, headers: {'content-type': 'text/html'});
     });
 
-    // File download route
     router.get('/download/<name>', (Request request, String name) {
       final decodedName = Uri.decodeComponent(name);
       final file = _selectedFiles.firstWhere(
@@ -170,7 +289,6 @@ class _ZShareHomeState extends State<ZShareHome> {
       return Response.notFound('File not found');
     });
 
-    // File upload route
     router.post('/upload', (Request request) async {
       final contentType = request.headers['content-type'] ?? '';
       if (!contentType.contains('multipart/form-data')) {
@@ -178,7 +296,6 @@ class _ZShareHomeState extends State<ZShareHome> {
       }
 
       final bytes = await request.read().expand((b) => b).toList();
-
       final filename = 'received_${DateTime.now().millisecondsSinceEpoch}.bin';
       final downloadDir = Directory('/storage/emulated/0/Download');
       final targetPath = downloadDir.existsSync()
@@ -188,9 +305,7 @@ class _ZShareHomeState extends State<ZShareHome> {
       final file = File(targetPath);
       await file.writeAsBytes(bytes);
 
-      setState(() {
-        _receivedFiles.add(targetPath);
-      });
+      setState(() => _receivedFiles.add(targetPath));
 
       return Response.ok('''
         <!DOCTYPE html>
@@ -210,6 +325,7 @@ class _ZShareHomeState extends State<ZShareHome> {
         _server = server;
         _isSharing = true;
       });
+      _startBroadcasting();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -220,6 +336,7 @@ class _ZShareHomeState extends State<ZShareHome> {
   }
 
   Future<void> _stopShareServer() async {
+    _stopBroadcasting();
     if (_server != null) {
       await _server!.close(force: true);
       _server = null;
@@ -229,6 +346,9 @@ class _ZShareHomeState extends State<ZShareHome> {
 
   @override
   void dispose() {
+    _stopBroadcasting();
+    _pruneTimer?.cancel();
+    _udpSocket?.close();
     _server?.close();
     super.dispose();
   }
@@ -239,11 +359,11 @@ class _ZShareHomeState extends State<ZShareHome> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.bolt, color: Color(0xFF818CF8)),
-            SizedBox(width: 8),
-            Text('ZShare', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Icon(Icons.bolt, color: Color(0xFF818CF8)),
+            const SizedBox(width: 8),
+            Text('ZShare ($_deviceName)', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
           ],
         ),
         backgroundColor: const Color(0xFF111827),
@@ -254,6 +374,7 @@ class _ZShareHomeState extends State<ZShareHome> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Status Card
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -268,23 +389,32 @@ class _ZShareHomeState extends State<ZShareHome> {
                     color: _isSharing ? Colors.greenAccent : Colors.grey,
                   ),
                   const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _isSharing ? 'Sharing Active' : 'Ready on Local Network',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        'IP: ${_localIp ?? "Detecting..."}',
-                        style: const TextStyle(color: Colors.grey, fontSize: 12),
-                      ),
-                    ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _isSharing ? 'Sharing Active' : 'Ready on Local Network',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          'IP: ${_localIp ?? "Detecting..."}',
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
+                  if (_isSharing)
+                    IconButton(
+                      icon: const Icon(Icons.stop_circle, color: Colors.redAccent),
+                      onPressed: _stopShareServer,
+                    ),
                 ],
               ),
             ),
             const SizedBox(height: 20),
+
+            // Share Action
             ElevatedButton.icon(
               onPressed: _pickFiles,
               icon: const Icon(Icons.add),
@@ -296,19 +426,69 @@ class _ZShareHomeState extends State<ZShareHome> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
-            const SizedBox(height: 16),
-            if (!_isSharing) ...[
-              OutlinedButton.icon(
-                onPressed: _startShareServer,
-                icon: const Icon(Icons.arrow_downward, color: Color(0xFF818CF8)),
-                label: const Text('Start Receive Mode Only', style: TextStyle(color: Color(0xFF818CF8))),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFF6366F1)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
+            const SizedBox(height: 24),
+
+            // Quick Share Radar: Nearby Devices
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111827),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF1F2937)),
               ),
-            ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.radar, color: Color(0xFF818CF8), size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'Nearby Devices (Quick Share)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_nearbyPeers.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(
+                        child: Text(
+                          'Scanning for active ZShare devices on Wi-Fi...',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._nearbyPeers.values.map((peer) {
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: CircleAvatar(
+                          backgroundColor: const Color(0xFF6366F1).withOpacity(0.2),
+                          child: const Icon(Icons.devices, color: Color(0xFF818CF8)),
+                        ),
+                        title: Text(peer.deviceName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        subtitle: Text(
+                          '${peer.ip} • ${peer.fileCount} file(s) available',
+                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
+                        trailing: ElevatedButton(
+                          onPressed: () => launchUrl(Uri.parse(peer.url), mode: LaunchMode.externalApplication),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF1F2937),
+                            foregroundColor: const Color(0xFF818CF8),
+                          ),
+                          child: const Text('Connect'),
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Active Sharing QR & Details
             if (_isSharing) ...[
               Container(
                 padding: const EdgeInsets.all(20),
@@ -320,7 +500,7 @@ class _ZShareHomeState extends State<ZShareHome> {
                 child: Column(
                   children: [
                     const Text(
-                      'Scan or Connect from Chromebook Browser',
+                      'Direct Transfer URL & QR',
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                     const SizedBox(height: 16),
@@ -333,10 +513,10 @@ class _ZShareHomeState extends State<ZShareHome> {
                       child: QrImageView(
                         data: shareUrl,
                         version: QrVersions.auto,
-                        size: 180,
+                        size: 170,
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     SelectableText(
                       shareUrl,
                       style: const TextStyle(
@@ -345,15 +525,12 @@ class _ZShareHomeState extends State<ZShareHome> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Open to send and receive files simultaneously',
-                      style: TextStyle(color: Colors.grey, fontSize: 11),
-                    ),
                   ],
                 ),
               ),
             ],
+
+            // Received Files Tracker
             if (_receivedFiles.isNotEmpty) ...[
               const SizedBox(height: 20),
               Container(
