@@ -1,10 +1,10 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Router;
 import 'package:file_picker/file_picker.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:shelf_router/shelf_router.dart';
+import 'package:shelf_router/shelf_router.dart' as shelf_router;
 import 'package:qr_flutter/qr_flutter.dart';
 
 void main() {
@@ -57,7 +57,6 @@ class _ZShareHomeState extends State<ZShareHome> {
       final info = NetworkInfo();
       String? ip = await info.getWifiIP();
       if (ip == null || ip.isEmpty) {
-        // Fallback: enumerate network interfaces
         final interfaces = await NetworkInterface.list(
           type: InternetAddressType.IPv4,
           includeLoopback: false,
@@ -86,7 +85,7 @@ class _ZShareHomeState extends State<ZShareHome> {
     await _stopShareServer();
     if (_selectedFiles.isEmpty) return;
 
-    final router = Router();
+    final router = shelf_router.Router();
 
     // Index page for receiving devices
     router.get('/', (Request request) {
@@ -200,7 +199,6 @@ class _ZShareHomeState extends State<ZShareHome> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Status Card
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -232,8 +230,6 @@ class _ZShareHomeState extends State<ZShareHome> {
               ),
             ),
             const SizedBox(height: 20),
-
-            // File selection action
             ElevatedButton.icon(
               onPressed: _pickFiles,
               icon: const Icon(Icons.add),
@@ -246,7 +242,6 @@ class _ZShareHomeState extends State<ZShareHome> {
               ),
             ),
             const SizedBox(height: 20),
-
             if (_isSharing) ...[
               Container(
                 padding: const EdgeInsets.all(20),
