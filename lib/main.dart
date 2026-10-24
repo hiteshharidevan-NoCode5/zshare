@@ -10,6 +10,7 @@ import 'package:shelf_router/shelf_router.dart' as shelf_router;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -66,6 +67,7 @@ class _ZShareHomeState extends State<ZShareHome> {
   RawDatagramSocket? _udpSocket;
   Timer? _broadcastTimer;
   Timer? _pruneTimer;
+  StreamSubscription? _intentSub;
 
   String? _localIp;
   String _deviceName = 'Unknown Device';
@@ -81,6 +83,50 @@ class _ZShareHomeState extends State<ZShareHome> {
   void initState() {
     super.initState();
     _initDeviceAndNetwork();
+    _initSharingIntent();
+  }
+
+  void _initSharingIntent() {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+
+    // Listen to media sharing when app is in memory
+    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen((List<SharedMediaFile> value) {
+      if (value.isNotEmpty) {
+        _handleSharedFiles(value);
+      }
+    }, onError: (err) {
+      debugPrint("getMediaStream error: $err");
+    });
+
+    // Get media sharing when app was closed/opened fresh
+    ReceiveSharingIntent.instance.getInitialMedia().then((List<SharedMediaFile> value) {
+      if (value.isNotEmpty) {
+        _handleSharedFiles(value);
+        ReceiveSharingIntent.instance.reset();
+      }
+    });
+  }
+
+  void _handleSharedFiles(List<SharedMediaFile> shared) {
+    final List<PlatformFile> files = [];
+    for (final s in shared) {
+      final f = File(s.path);
+      if (f.existsSync()) {
+        files.add(
+          PlatformFile(
+            path: s.path,
+            name: s.path.split('/').last,
+            size: f.lengthSync(),
+          ),
+        );
+      }
+    }
+    if (files.isNotEmpty) {
+      setState(() {
+        _selectedFiles = files;
+      });
+      _startShareServer();
+    }
   }
 
   Future<void> _initDeviceAndNetwork() async {
@@ -145,7 +191,6 @@ class _ZShareHomeState extends State<ZShareHome> {
               final map = jsonDecode(raw) as Map<String, dynamic>;
               final ip = map['ip'] as String;
 
-              // Ignore self-announcements
               if (ip == _localIp) return;
 
               final peerKey = '$ip:${map['port']}';
@@ -163,7 +208,6 @@ class _ZShareHomeState extends State<ZShareHome> {
         }
       });
 
-      // Prune inactive peers older than 6 seconds
       _pruneTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
         final threshold = DateTime.now().subtract(const Duration(seconds: 6));
         setState(() {
@@ -346,6 +390,7 @@ class _ZShareHomeState extends State<ZShareHome> {
 
   @override
   void dispose() {
+    _intentSub?.cancel();
     _stopBroadcasting();
     _pruneTimer?.cancel();
     _udpSocket?.close();
@@ -363,7 +408,7 @@ class _ZShareHomeState extends State<ZShareHome> {
           children: [
             const Icon(Icons.bolt, color: Color(0xFF818CF8)),
             const SizedBox(width: 8),
-            Text('ZShare ($_deviceName)', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+            Text('ZShare (${_deviceName.split(" ").take(2).join(" ")})', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
           ],
         ),
         backgroundColor: const Color(0xFF111827),
@@ -374,7 +419,6 @@ class _ZShareHomeState extends State<ZShareHome> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Status Card
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -414,7 +458,6 @@ class _ZShareHomeState extends State<ZShareHome> {
             ),
             const SizedBox(height: 20),
 
-            // Share Action
             ElevatedButton.icon(
               onPressed: _pickFiles,
               icon: const Icon(Icons.add),
@@ -488,7 +531,6 @@ class _ZShareHomeState extends State<ZShareHome> {
             ),
             const SizedBox(height: 20),
 
-            // Active Sharing QR & Details
             if (_isSharing) ...[
               Container(
                 padding: const EdgeInsets.all(20),
@@ -530,7 +572,6 @@ class _ZShareHomeState extends State<ZShareHome> {
               ),
             ],
 
-            // Received Files Tracker
             if (_receivedFiles.isNotEmpty) ...[
               const SizedBox(height: 20),
               Container(

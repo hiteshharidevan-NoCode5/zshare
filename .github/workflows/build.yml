@@ -33,9 +33,16 @@ jobs:
         run: |
           flutter create --org com.zshare . --platforms=android,linux,web
 
-      - name: Configure Android Permissions and SDK 35
+      - name: Configure Android Permissions, Intent Filters and SDK 35
         run: |
+          # Permissions
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>' android/app/src/main/AndroidManifest.xml
+
+          # Share Sheet Intent Filters inside MainActivity
+          INTENT_SNIPPET='<intent-filter>\n                <action android:name="android.intent.action.SEND" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <data android:mimeType="*/*" />\n            </intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.SEND_MULTIPLE" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <data android:mimeType="*/*" />\n            </intent-filter>'
+          sed -i "/<\/activity>/i $INTENT_SNIPPET" android/app/src/main/AndroidManifest.xml
+
+          # SDK 35
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle || true
           sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle || true
 
