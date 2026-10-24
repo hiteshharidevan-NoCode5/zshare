@@ -19,9 +19,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -29,20 +26,22 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Accept Android SDK Licenses
+        run: yes | flutter doctor --android-licenses || true
+
       - name: Generate Platform Scaffolding
         run: |
           flutter create --org com.zshare . --platforms=android,linux,web
 
-      - name: Configure Android Permissions and SDK
+      - name: Configure Android Permissions
         run: |
-          # Inject Internet and Network State permissions into AndroidManifest
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>' android/app/src/main/AndroidManifest.xml
 
       - name: Install Dependencies
         run: flutter pub get
 
       - name: Build Android APK
-        run: flutter build apk --release --verbose
+        run: flutter build apk --release
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
