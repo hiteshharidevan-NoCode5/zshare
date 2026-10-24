@@ -76,44 +76,31 @@ jobs:
           gradle = gradle.replace("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 35")
           gradle = gradle.replace("JavaVersion.VERSION_1_8", "JavaVersion.VERSION_17")
 
-          # Ensure Kotlin JVM target is set to 17
-          if "kotlinOptions" not in gradle:
-              gradle = gradle.replace(
-                  "android {",
-                  "android {\n    kotlinOptions {\n        jvmTarget = '17'\n    }"
-              )
-
           with open(app_gradle, "w", encoding="utf-8") as f:
               f.write(gradle)
 
-          # 3. Align all subprojects (including plugins like receive_sharing_intent) to Java 17
+          # 3. Synchronize JVM toolchain across all modules without using afterEvaluate
           root_gradle = "android/build.gradle"
           with open(root_gradle, "r", encoding="utf-8") as f:
               root = f.read()
 
-          subproject_fix = """
+          jvm_sync_block = """
           subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty("android")) {
-                      android {
-                          compileOptions {
-                              sourceCompatibility = JavaVersion.VERSION_17
-                              targetCompatibility = JavaVersion.VERSION_17
-                          }
-                      }
-                  }
-                  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-                      kotlinOptions {
-                          jvmTarget = "17"
-                      }
+              tasks.withType(JavaCompile).configureEach {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                  kotlinOptions {
+                      jvmTarget = "17"
                   }
               }
           }
           """
           with open(root_gradle, "a", encoding="utf-8") as f:
-              f.write(subproject_fix)
+              f.write(jvm_sync_block)
 
-          print("All JVM targets successfully synced to Java 17.")
+          print("Gradle build files configured with task-level Java 17 synchronization.")
           PYEOF
 
       - name: Install Dependencies
