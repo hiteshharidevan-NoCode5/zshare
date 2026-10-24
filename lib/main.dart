@@ -1,0 +1,300 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:network_info_plus/network_info_plus.dart';
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_router/shelf_router.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ZShareApp());
+}
+
+class ZShareApp extends StatelessWidget {
+  const ZShareApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'ZShare',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF0B0F19),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF6366F1),
+          surface: Color(0xFF111827),
+        ),
+      ),
+      home: const ZShareHome(),
+    );
+  }
+}
+
+class ZShareHome extends StatefulWidget {
+  const ZShareHome({super.key});
+
+  @override
+  State<ZShareHome> createState() => _ZShareHomeState();
+}
+
+class _ZShareHomeState extends State<ZShareHome> {
+  HttpServer? _server;
+  String? _localIp;
+  List<PlatformFile> _selectedFiles = [];
+  bool _isSharing = false;
+  final int _port = 8888;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchLocalIp();
+  }
+
+  Future<void> _fetchLocalIp() async {
+    try {
+      final info = NetworkInfo();
+      String? ip = await info.getWifiIP();
+      if (ip == null || ip.isEmpty) {
+        // Fallback: enumerate network interfaces
+        final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4,
+          includeLoopback: false,
+        );
+        if (interfaces.isNotEmpty && interfaces.first.addresses.isNotEmpty) {
+          ip = interfaces.first.addresses.first.address;
+        }
+      }
+      setState(() => _localIp = ip ?? '127.0.0.1');
+    } catch (_) {
+      setState(() => _localIp = '127.0.0.1');
+    }
+  }
+
+  Future<void> _pickFiles() async {
+    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    if (result != null && result.files.isNotEmpty) {
+      setState(() {
+        _selectedFiles = result.files;
+      });
+      _startShareServer();
+    }
+  }
+
+  Future<void> _startShareServer() async {
+    await _stopShareServer();
+    if (_selectedFiles.isEmpty) return;
+
+    final router = Router();
+
+    // Index page for receiving devices
+    router.get('/', (Request request) {
+      final fileListHtml = _selectedFiles.map((file) {
+        final encodedName = Uri.encodeComponent(file.name);
+        final sizeMb = (file.size / (1024 * 1024)).toStringAsFixed(2);
+        return '''
+          <li style="margin-bottom: 12px; list-style: none;">
+            <a href="/download/$encodedName" download="$encodedName" 
+               style="background: #1F2937; color: #E0E7FF; padding: 12px 18px; border-radius: 10px; display: inline-block; text-decoration: none; font-weight: 600; border: 1px solid #374151;">
+              📥 Download ${file.name} <span style="color: #9CA3AF; font-size: 12px; margin-left: 8px;">($sizeMb MB)</span>
+            </a>
+          </li>
+        ''';
+      }).join();
+
+      final html = '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>ZShare Direct Download</title>
+        </head>
+        <body style="background: #0B0F19; color: #F3F4F6; font-family: -apple-system, sans-serif; padding: 24px; text-align: center;">
+          <h1 style="color: #818CF8; margin-bottom: 4px;">⚡ ZShare</h1>
+          <p style="color: #9CA3AF; font-size: 14px; margin-bottom: 24px;">Direct Wi-Fi Transfer (High Speed)</p>
+          <ul style="padding: 0; max-width: 500px; margin: 0 auto;">$fileListHtml</ul>
+        </body>
+        </html>
+      ''';
+      return Response.ok(html, headers: {'content-type': 'text/html'});
+    });
+
+    // File download route
+    router.get('/download/<name>', (Request request, String name) {
+      final decodedName = Uri.decodeComponent(name);
+      final file = _selectedFiles.firstWhere(
+        (f) => f.name == decodedName,
+        orElse: () => _selectedFiles.first,
+      );
+
+      if (file.path != null) {
+        final diskFile = File(file.path!);
+        if (diskFile.existsSync()) {
+          return Response.ok(
+            diskFile.openRead(),
+            headers: {
+              'content-type': 'application/octet-stream',
+              'content-disposition': 'attachment; filename="${file.name}"',
+              'content-length': file.size.toString(),
+            },
+          );
+        }
+      } else if (file.bytes != null) {
+        return Response.ok(
+          file.bytes!,
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-disposition': 'attachment; filename="${file.name}"',
+          },
+        );
+      }
+      return Response.notFound('File not found');
+    });
+
+    try {
+      final server = await shelf_io.serve(router, InternetAddress.anyIPv4, _port);
+      setState(() {
+        _server = server;
+        _isSharing = true;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start server: $e')),
+      );
+    }
+  }
+
+  Future<void> _stopShareServer() async {
+    if (_server != null) {
+      await _server!.close(force: true);
+      _server = null;
+    }
+    setState(() => _isSharing = false);
+  }
+
+  @override
+  void dispose() {
+    _server?.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final shareUrl = 'http://${_localIp ?? "127.0.0.1"}:$_port';
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Row(
+          children: [
+            Icon(Icons.bolt, color: Color(0xFF818CF8)),
+            SizedBox(width: 8),
+            Text('ZShare', style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        backgroundColor: const Color(0xFF111827),
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Status Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111827),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF1F2937)),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _isSharing ? Icons.wifi_tethering : Icons.wifi,
+                    color: _isSharing ? Colors.greenAccent : Colors.grey,
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _isSharing ? 'Sharing Active' : 'Ready on Local Network',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'IP: ${_localIp ?? "Detecting..."}',
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // File selection action
+            ElevatedButton.icon(
+              onPressed: _pickFiles,
+              icon: const Icon(Icons.add),
+              label: const Text('Choose Files to Share'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6366F1),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            if (_isSharing) ...[
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111827),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.3)),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Scan to Download on Tablet or Phone',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: QrImageView(
+                        data: shareUrl,
+                        version: QrVersions.auto,
+                        size: 180,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SelectableText(
+                      shareUrl,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        color: Color(0xFF818CF8),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Open this link in any browser on the same Wi-Fi',
+                      style: TextStyle(color: Colors.grey, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
