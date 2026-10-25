@@ -43,7 +43,8 @@ jobs:
 
           permissions = """    <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\n"""
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+              <uses-permission android:name="android.permission.CAMERA"/>\n"""
 
           intent_filters = """
                       <intent-filter>
@@ -58,7 +59,7 @@ jobs:
                       </intent-filter>
           """
 
-          if "android.permission.INTERNET" not in content:
+          if "android.permission.CAMERA" not in content:
               content = content.replace("<application", permissions + "    <application")
 
           if "android.intent.action.SEND" not in content:
@@ -78,7 +79,7 @@ jobs:
 
           with open(app_gradle, "w", encoding="utf-8") as f:
               f.write(gradle)
-          print("Configurations applied successfully.")
+          print("Permissions and Gradle options configured.")
           PYEOF
 
       - name: Install Dependencies

@@ -11,6 +11,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,7 +38,7 @@ class ZShareApp extends StatelessWidget {
   }
 }
 
-class DiscoveredPeer {
+Class DiscoveredPeer {
   final String deviceName;
   final String ip;
   final int port;
@@ -49,7 +50,7 @@ class DiscoveredPeer {
     required this.ip,
     required this.port,
     required this.fileCount,
-    required this.lastSeen,
+    required this.lastSeen�
   });
 
   String get url => 'http://$ip:$port';
@@ -89,7 +90,6 @@ class _ZShareHomeState extends State<ZShareHome> {
   void _initSharingIntent() {
     if (!Platform.isAndroid && !Platform.isIOS) return;
 
-    // Listen to media sharing when app is in memory
     _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen((List<SharedMediaFile> value) {
       if (value.isNotEmpty) {
         _handleSharedFiles(value);
@@ -98,7 +98,6 @@ class _ZShareHomeState extends State<ZShareHome> {
       debugPrint("getMediaStream error: $err");
     });
 
-    // Get media sharing when app was closed/opened fresh
     ReceiveSharingIntent.instance.getInitialMedia().then((List<SharedMediaFile> value) {
       if (value.isNotEmpty) {
         _handleSharedFiles(value);
@@ -132,7 +131,7 @@ class _ZShareHomeState extends State<ZShareHome> {
   Future<void> _initDeviceAndNetwork() async {
     await _detectDeviceName();
     await _fetchLocalIp();
-    await _startUdpDiscovery();
+    await _startUdpDIscovery();
   }
 
   Future<void> _detectDeviceName() async {
@@ -172,7 +171,7 @@ class _ZShareHomeState extends State<ZShareHome> {
     }
   }
 
-  Future<void> _startUdpDiscovery() async {
+  Future<void> _startUdpDIscovery() async {
     try {
       _udpSocket = await RawDatagramSocket.bind(
         InternetAddress.anyIPv4,
@@ -196,7 +195,7 @@ class _ZShareHomeState extends State<ZShareHome> {
               final peerKey = '$ip:${map['port']}';
               setState(() {
                 _nearbyPeers[peerKey] = DiscoveredPeer(
-                  deviceName: map['deviceName'] ?? 'Peer',
+                  deviceName: map['teviceName'] ?? 'Peer',
                   ip: ip,
                   port: map['port'] ?? 8888,
                   fileCount: map['fileCount'] ?? 0,
@@ -257,12 +256,12 @@ class _ZShareHomeState extends State<ZShareHome> {
           ? '<p style="color: #6B7280; font-size: 13px;">No files currently shared.</p>'
           : _selectedFiles.map((file) {
               final encodedName = Uri.encodeComponent(file.name);
-              final sizeMb = (file.size / (1024 * 1024)).toStringAsFixed(2);
+              final sizeMb = (file.size / (1024 * 1024)).toStringFixed(2);
               return '''
                 <li style="margin-bottom: 10px; list-style: none;">
                   <a href="/download/$encodedName" download="$encodedName" 
                      style="background: #1F2937; color: #E0E7FF; padding: 12px 18px; border-radius: 10px; display: block; text-decoration: none; font-weight: 600; border: 1px solid #374151;">
-                    📥 ${file.name} <span style="color: #9CA3AF; font-size: 12px; margin-left: 8px;">($sizeMb MB)</span>
+                    📥  ${file.name} <span style="color: #9CA3AF; font-size: 12px; margin-left: 8px;">($sizeMb MB)</span>
                   </a>
                 </li>
               ''';
@@ -282,10 +281,10 @@ class _ZShareHomeState extends State<ZShareHome> {
         </head>
         <body>
           <h1 style="color: #818CF8; margin-bottom: 4px;">⚡ ZShare</h1>
-          <p style="color: #9CA3AF; font-size: 13px; margin-bottom: 24px;">Connected to ${_deviceName}</p>
+          <p style="color: #9CA3AF; font-size: 13px; margin-bottom: 24px;">Connected to $_deviceName</p>
 
           <div class="card">
-            <h3 style="margin-top: 0;">📤 Send Files to $_deviceName</h3>
+            <h3 style="margin-top: 0;">📔 Send Files to $_deviceName</h3>
             <form action="/upload" method="POST" enctype="multipart/form-data">
               <input type="file" name="file" required style="margin-bottom: 14px; display: block; width: 100%; color: #9CA3AF;">
               <button type="submit" class="btn">Upload to Device</button>
@@ -293,7 +292,7 @@ class _ZShareHomeState extends State<ZShareHome> {
           </div>
 
           <div class="card">
-            <h3 style="margin-top: 0;">📥 Available Downloads</h3>
+            <h3 style="margin-top: 0;">🔥` Available Downloads</h3>
             <ul style="padding: 0; margin: 0;">$fileListHtml</ul>
           </div>
         </body>
@@ -360,7 +359,7 @@ class _ZShareHomeState extends State<ZShareHome> {
           <a href="/" style="color: #818CF8; text-decoration: none; font-weight: bold;">← Back to Transfer Portal</a>
         </body>
         </html>
-      ''', headers: {'content-type': 'text/html'});
+      '%', headers: {'content-type': 'text/html'});
     });
 
     try {
@@ -388,6 +387,17 @@ class _ZShareHomeState extends State<ZShareHome> {
     setState(() => _isSharing = false);
   }
 
+  void _openQrScanner() async {
+    final scannedUrl = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (context) => const LensScannerScreen()),
+    );
+
+    if (scannedUrl != null && scannedUrl.startsWith('http')) {
+      launchUrl(Uri.parse(scannedUrl), mode: LaunchMode.externalApplication);
+    }
+  }
+
   @override
   void dispose() {
     _intentSub?.cancel();
@@ -411,6 +421,13 @@ class _ZShareHomeState extends State<ZShareHome> {
             Text('ZShare (${_deviceName.split(" ").take(2).join(" ")})', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner, color: Color(0xFF818CF8)),
+            tooltip: 'Scan Transfer QR',
+            onPressed: _openQrScanner,
+          ),
+        ],
         backgroundColor: const Color(0xFF111827),
         elevation: 0,
       ),
@@ -424,7 +441,7 @@ class _ZShareHomeState extends State<ZShareHome> {
               decoration: BoxDecoration(
                 color: const Color(0xFF111827),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF1F2937)),
+                border: Border.all(color: const Color(0xFF162937)),
               ),
               child: Row(
                 children: [
@@ -458,26 +475,44 @@ class _ZShareHomeState extends State<ZShareHome> {
             ),
             const SizedBox(height: 20),
 
-            ElevatedButton.icon(
-              onPressed: _pickFiles,
-              icon: const Icon(Icons.add),
-              label: const Text('Choose Files to Share'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6366F1),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _pickFiles,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Share Files'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6366F1),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _openQrScanner,
+                    icon: const Icon(Icons.center_focus_weak, color: Color(0xFF818CF8)),
+                    label: const Text('Scan QR', style: TextStyle(color: Color(0xFF818CF8))),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFF6366F1)),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 24),
 
-            // Quick Share Radar: Nearby Devices
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: const Color(0xFF111827),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF1F2937)),
+                border: Border.all(color: const Color(0xFF162937)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -487,7 +522,7 @@ class _ZShareHomeState extends State<ZShareHome> {
                       Icon(Icons.radar, color: Color(0xFF818CF8), size: 18),
                       SizedBox(width: 8),
                       Text(
-                        'Nearby Devices (Quick Share)',
+                        'Nearby Devices (Quick Share',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ],
@@ -519,7 +554,7 @@ class _ZShareHomeState extends State<ZShareHome> {
                         trailing: ElevatedButton(
                           onPressed: () => launchUrl(Uri.parse(peer.url), mode: LaunchMode.externalApplication),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1F2937),
+                            backgroundColor: const Color(0xFF162937),
                             foregroundColor: const Color(0xFF818CF8),
                           ),
                           child: const Text('Connect'),
@@ -594,5 +629,90 @@ class _ZShareHomeState extends State<ZShareHome> {
         ),
       ),
     );
+  }
+}
+
+class LensScannerScreen extends StatefulWidget {
+  const LensScannerScreen({super.key});
+
+  @override
+  State<LensScannerScreen> createState() => _LensScannerScreenState();
+}
+
+class _LensScannerScreenState extends State<LensScannerScreen> {
+  final MobileScannerController _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.noDuplicates,
+  );
+  bool _scanned = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Scan ZShare QR�� style: TextStyle(fontSize: 16)),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on),
+            onPressed: () => _controller.toggleTorch(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.flip_camera_android),
+            onPressed: () => _controller.switchCamera(),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _controller,
+            onDetect: (capture) {
+              if (_scanned) return;
+              final barcodes = capture.barcodes;
+              for (final barcode in barcodes) {
+                if (barcode.rawValue != null) {
+                  _scanned = true;
+                  Navigator.pop(context, barcode.rawValue);
+                  break;
+                }
+              }
+            },
+          ),
+          Center(
+            child: Container(
+              width: 250,
+              height: 250,
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFF6366F1), width: 2.5),
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
+          ),
+          const Positioned(
+            bottom: 60,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Text(
+                'Align QR code within frame to connect',
+                style: TextStyle(
+                  color: Colors.white,
+                  backgroundColor: Colors26,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
   }
 }
