@@ -195,7 +195,7 @@ class _ZShareHomeState extends State<ZShareHome> {
               final peerKey = '$ip:${map['port']}';
               setState(() {
                 _nearbyPeers[peerKey] = DiscoveredPeer(
-                  deviceName: map['teviceName'] ?? 'Peer',
+                  deviceName: map['deviceName'] ?? 'Peer',
                   ip: ip,
                   port: map['port'] ?? 8888,
                   fileCount: map['fileCount'] ?? 0,

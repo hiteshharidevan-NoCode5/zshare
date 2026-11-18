@@ -33,7 +33,7 @@ jobs:
         run: |
           flutter create --org com.zshare . --platforms=android,linux,web
 
-      - name: Configure Android Permissions, Intent Filters and SDK 35
+      - name: Configure Android Permissions, Cleartext HTTP, and SDK Versions
         run: |
           python3 - << 'PYEOF'
           # 1. Update AndroidManifest.xml
@@ -62,24 +62,29 @@ jobs:
           if "android.permission.CAMERA" not in content:
               content = content.replace("<application", permissions + "    <application")
 
+          if "android:usesCleartextTraffic" not in content:
+              content = content.replace("<application", '<application android:usesCleartextTraffic="true"')
+
           if "android.intent.action.SEND" not in content:
               content = content.replace("</activity>", intent_filters + "        </activity>")
 
           with open(manifest_path, "w", encoding="utf-8") as f:
               f.write(content)
 
-          # 2. Update android/app/build.gradle
+          # 2. Update android/app/build.gradle (compileSdk 35, minSdk 23, Java 17)
           app_gradle = "android/app/build.gradle"
           with open(app_gradle, "r", encoding="utf-8") as f:
               gradle = f.read()
 
           gradle = gradle.replace("compileSdk = flutter.compileSdkVersion", "compileSdk = 35")
           gradle = gradle.replace("compileSdkVersion flutter.compileSdkVersion", "compileSdkVersion 35")
+          gradle = gradle.replace("minSdk = flutter.minSdkVersion", "minSdk = 23")
+          gradle = gradle.replace("minSdkVersion flutter.minSdkVersion", "minSdkVersion 23")
           gradle = gradle.replace("JavaVersion.VERSION_1_8", "JavaVersion.VERSION_17")
 
           with open(app_gradle, "w", encoding="utf-8") as f:
               f.write(gradle)
-          print("Permissions and Gradle options configured.")
+          print("Manifest and Gradle SDK 23/35 configurations applied.")
           PYEOF
 
       - name: Install Dependencies
