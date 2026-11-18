@@ -522,7 +522,7 @@ class _ZShareHomeState extends State<ZShareHome> {
                       Icon(Icons.radar, color: Color(0xFF818CF8), size: 18),
                       SizedBox(width: 8),
                       Text(
-                        'Nearby Devices (Quick Share',
+                        'Nearby Devices (Quick Share)',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ],
