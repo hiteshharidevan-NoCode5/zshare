@@ -50,7 +50,7 @@ class DiscoveredPeer {
     required this.ip,
     required this.port,
     required this.fileCount,
-    required this.lastSeenË
+    required this.lastSeenï¿½
   });
 
   String get url => 'http://$ip:$port';
@@ -131,7 +131,7 @@ class _ZShareHomeState extends State<ZShareHome> {
   Future<void> _initDeviceAndNetwork() async {
     await _detectDeviceName();
     await _fetchLocalIp();
-    await _startUdpDIscovery();
+    await _startUdpDiscovery();
   }
 
   Future<void> _detectDeviceName() async {
@@ -171,71 +171,108 @@ class _ZShareHomeState extends State<ZShareHome> {
     }
   }
 
-  Future<void> _startUdpDIscovery() async {
-    try {
-      _udpSocket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        _discoveryPort,
-        reuseAddress: true,
-        reusePort: true,
-      );
-      _udpSocket?.broadcastEnabled = true;
+  bool _isScanning = false;
 
-      _udpSocket?.listen((RawSocketEvent event) {
-        if (event == RawSocketEvent.read) {
-          final datagram = _udpSocket?.receive();
-          if (datagram != null) {
-            try {
-              final raw = utf8.decode(datagram.data);
-              final map = jsonDecode(raw) as Map<String, dynamic>;
-              final ip = map['ip'] as String;
-
-              if (ip == _localIp) return;
-
-              final peerKey = '$ip:${map['port']}';
-              setState(() {
-                _nearbyPeers[peerKey] = DiscoveredPeer(
-                  deviceName: map['deviceName'] ?? 'Peer',
-                  ip: ip,
-                  port: map['port'] ?? 8888,
-                  fileCount: map['fileCount'] ?? 0,
-                  lastSeen: DateTime.now(),
-                );
-              });
-            } catch (_) {}
-          }
-        }
-      });
-
-      _pruneTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-        final threshold = DateTime.now().subtract(const Duration(seconds: 6));
-        setState(() {
-          _nearbyPeers.removeWhere((_, peer) => peer.lastSeen.isBefore(threshold));
-        });
-      });
-    } catch (e) {
-      debugPrint('UDP discovery socket error: $e');
-    }
-  }
-
-  void _startBroadcasting() {
-    _broadcastTimer?.cancel();
-    _broadcastTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (_localIp == null || _udpSocket == null) return;
-      final payload = jsonEncode({
-        'deviceName': _deviceName,
-        'ip': _localIp,
-        'port': _port,
-        'fileCount': _selectedFiles.length,
-      });
-      final data = utf8.encode(payload);
-      _udpSocket?.send(data, InternetAddress('255.255.255.255'), _discoveryPort);
+  Future<void> _startUdpDiscovery() async {
+    await _scanNetworkForPeers();
+    _pruneTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      _scanNetworkForPeers();
     });
   }
 
-  void _stopBroadcasting() {
-    _broadcastTimer?.cancel();
-    _broadcastTimer = null;
+  Future<void> _scanNetworkForPeers() async {
+    if (_localIp == null || _isScanning) return;
+    setState(() => _isScanning = true);
+
+    final parts = _localIp!.split('.');
+    final subnets = <String>{};
+    if (parts.length == 4 && !parts[0].startsWith('100')) {
+      subnets.add('${parts[0]}.${parts[1]}.${parts[2]}');
+    } else {
+      subnets.addAll(['192.168.1', '192.168.0', '192.168.29', '192.168.43']);
+    }
+
+    final foundKeys = <String>{};
+    final futures = <Future<void>>[];
+
+    for (final subnet in subnets) {
+      for (int i = 1; i <= 254; i++) {
+        final targetIp = '$subnet.$i';
+        if (targetIp == _localIp) continue;
+
+        futures.add(() async {
+          final client = HttpClient()..connectionTimeout = const Duration(milliseconds: 650);
+          try {
+            final req = await client.getUrl(Uri.parse('http://$targetIp:$_port/ping'));
+            final res = await req.close().timeout(const Duration(milliseconds: 650));
+            if (res.statusCode == 200) {
+              final body = await res.transform(utf8.decoder).join();
+              final map = jsonDecode(body) as Map<String, dynamic>;
+              final key = '$targetIp:$_port';
+              foundKeys.add(key);
+              if (mounted) {
+                setState(() {
+                  _nearbyPeers[key] = DiscoveredPeer(
+                    deviceName: map['deviceName'] ?? 'ZShare Peer',
+                    ip: targetIp,
+                    port: _port,
+                    fileCount: map['fileCount'] ?? 0,
+                    lastSeen: DateTime.now(),
+                  );
+                });
+              }
+            }
+          } catch (_) {
+          } finally {
+            client.close(force: true);
+          }
+        }());
+      }
+    }
+
+    await Future.wait(futures);
+    if (mounted) {
+      setState(() {
+        _nearbyPeers.removeWhere((key, _) => !foundKeys.contains(key));
+        _isScanning = false;
+      });
+    }
+  }
+
+  void _startBroadcasting() {}
+  void _stopBroadcasting() {}
+
+  void _showManualConnectDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111827),
+        title: const Text('Connect by IP', style: TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            hintText: 'e.g. 192.168.1.12',
+            labelText: 'Sender IP Address',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              final ip = controller.text.trim();
+              Navigator.pop(ctx);
+              if (ip.isNotEmpty) {
+                final url = ip.startsWith('http') ? ip : 'http://$ip:$_port';
+                launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+              }
+            },
+            child: const Text('Open'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickFiles() async {
@@ -299,6 +336,13 @@ class _ZShareHomeState extends State<ZShareHome> {
         </html>
       ''';
       return Response.ok(html, headers: {'content-type': 'text/html'});
+    });
+
+    router.get('/ping', (Request request) {
+      return Response.ok(
+        jsonEncode({'deviceName': _deviceName, 'fileCount': _selectedFiles.length}),
+        headers: {'content-type': 'application/json'},
+      );
     });
 
     router.get('/download/<name>', (Request request, String name) {
@@ -517,13 +561,24 @@ class _ZShareHomeState extends State<ZShareHome> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
+                  Row(
                     children: [
-                      Icon(Icons.radar, color: Color(0xFF818CF8), size: 18),
-                      SizedBox(width: 8),
-                      Text(
-                        'Nearby Devices (Quick Share)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      const Icon(Icons.radar, color: Color(0xFF818CF8), size: 18),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Nearby Devices',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(_isScanning ? Icons.sync : Icons.refresh, color: const Color(0xFF818CF8), size: 18),
+                        tooltip: 'Scan Wi-Fi',
+                        onPressed: _isScanning ? null : _scanNetworkForPeers,
+                      ),
+                      TextButton(
+                        onPressed: _showManualConnectDialog,
+                        child: const Text('Enter IP', style: TextStyle(color: Color(0xFF818CF8), fontSize: 12)),
                       ),
                     ],
                   ),
@@ -656,7 +711,7 @@ class _LensScannerScreenState extends State<LensScannerScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Scan ZShare QRÉÌ style: TextStyle(fontSize: 16)),
+        title: const Text('Scan ZShare QRï¿½ï¿½ style: TextStyle(fontSize: 16)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
