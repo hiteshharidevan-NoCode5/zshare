@@ -403,7 +403,7 @@ class _ZShareHomeState extends State<ZShareHome> {
           <a href="/" style="color: #818CF8; text-decoration: none; font-weight: bold;">← Back to Transfer Portal</a>
         </body>
         </html>
-      '%', headers: {'content-type': 'text/html'});
+      ''', headers: {'content-type': 'text/html'});
     });
 
     try {
