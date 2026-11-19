@@ -50,7 +50,7 @@ class DiscoveredPeer {
     required this.ip,
     required this.port,
     required this.fileCount,
-    required this.lastSeen�
+    required this.lastSeen,
   });
 
   String get url => 'http://$ip:$port';
@@ -675,7 +675,7 @@ class _ZShareHomeState extends State<ZShareHome> {
                   children: [
                     const Text('Received Files:', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
-                    ..._receivedFiles.map((p) => Text('• ${p.split('/').last}', style: const TextStyle(color: Colors.greenAccent, fontSize: 12))),
+                    ..._receivedFiles.map((p) => Text("• ${p.split('/').last}", style: const TextStyle(color: Colors.greenAccent, fontSize: 12))),
                   ],
                 ),
               ),
@@ -711,7 +711,7 @@ class _LensScannerScreenState extends State<LensScannerScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Scan ZShare QR�� style: TextStyle(fontSize: 16)),
+        title: const Text('Scan ZShare QR', style: TextStyle(fontSize: 16)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
