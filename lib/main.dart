@@ -38,7 +38,7 @@ class ZShareApp extends StatelessWidget {
   }
 }
 
-Class DiscoveredPeer {
+class DiscoveredPeer {
   final String deviceName;
   final String ip;
   final int port;
@@ -256,7 +256,7 @@ class _ZShareHomeState extends State<ZShareHome> {
           ? '<p style="color: #6B7280; font-size: 13px;">No files currently shared.</p>'
           : _selectedFiles.map((file) {
               final encodedName = Uri.encodeComponent(file.name);
-              final sizeMb = (file.size / (1024 * 1024)).toStringFixed(2);
+              final sizeMb = (file.size / (1024 * 1024)).toStringAsFixed(2);
               return '''
                 <li style="margin-bottom: 10px; list-style: none;">
                   <a href="/download/$encodedName" download="$encodedName" 
