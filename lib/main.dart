@@ -760,12 +760,13 @@ class _LensScannerScreenState extends State<LensScannerScreen> {
                 'Align QR code within frame to connect',
                 style: TextStyle(
                   color: Colors.white,
-                  backgroundColor: Colors26,
+                  backgroundColor: Colors.black26,
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ),
+          ),
           ],
         ),
       );
