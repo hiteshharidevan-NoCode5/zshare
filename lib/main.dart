@@ -675,7 +675,7 @@ class _ZShareHomeState extends State<ZShareHome> {
                   children: [
                     const Text('Received Files:', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
-                    ..._receivedFiles.map((p) => Text("• ${p.split('/').last}", style: const TextStyle(color: Colors.greenAccent, fontSize: 12))),
+                    ..._receivedFiles.map((p) => Text("• ${Uri.file(p).pathSegments.last}", style: const TextStyle(color: Colors.greenAccent, fontSize: 12))),
                   ],
                 ),
               ),
